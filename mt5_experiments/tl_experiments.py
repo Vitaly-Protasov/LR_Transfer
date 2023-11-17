@@ -14,9 +14,11 @@ from pathlib import Path
 import numpy as np
 from flax.training.common_utils import shard
 from enum import Enum
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple
+import pandas as pd
 import uuid
 import functools
+from IPython.display import display, clear_output
 
 import tl_utils
 
@@ -30,8 +32,6 @@ class mt5PerplexityExperiments:
         self.device = device
         self.model = MT5ForConditionalGeneration.from_pretrained(model_id).to(device)
         self.tokenizer = T5Tokenizer.from_pretrained(model_id)
-
-        self.log_dict = {}
 
     def get_tokenized_dataset(self, datasets, column_name):
         max_seq_length = min(self.max_seq_length, self.tokenizer.model_max_length)
@@ -89,7 +89,6 @@ class mt5PerplexityExperiments:
         mlm_probability: float = 0.15,
         mean_noise_span_length: int = 3,
         num_proc: Optional[int] = None,
-        lr_languages_to_test: List[str] = [],
         save_checkpoints: bool = False,
     ):
         log_params = {
@@ -117,12 +116,9 @@ class mt5PerplexityExperiments:
         if not os.path.exists(self.save_folder):
             os.makedirs(self.save_folder)
 
-        params_filename = Path(self.save_folder, "params.json")
-        log_filename = Path(self.save_folder, "log_results.txt")
-        log_errors = Path(self.save_folder, "log_errors.txt")
-        new_log_path = Path(self.save_folder, "new_log.json")
+        log_df = {"iteration": [], "train loss": [], "val perplexity": []}
 
-        with open(params_filename, "w+") as outfile:
+        with open(Path(self.save_folder, "params.json"), "w+") as outfile:
             json.dump(log_params, outfile, indent=4)
 
         train_val_paths = [
@@ -135,25 +131,23 @@ class mt5PerplexityExperiments:
         dataset_limit = min(len(dataset), max_dataset_len)
         cutted_dataset = dataset.select(data_indices[:dataset_limit])
         datasets = cutted_dataset.train_test_split(test_size=1 - train_size)
+        datasets["val"] = datasets["test"]
+        del datasets["test"]
 
-        train_tokenized_datasets, train_data_collator = self.get_tokenized_dataset(
+        tokenized_datasets, data_collator = self.get_tokenized_dataset(
             datasets, "train"
         )
-        num_train_samples = len(train_tokenized_datasets["train"])
+
+        num_train_samples = len(tokenized_datasets["train"])
         train_batch_idx = tl_utils.generate_batch_splits(
             np.arange(num_train_samples), self.per_device_batch_size
         )
 
         num_train_steps = (
-            len(train_tokenized_datasets["train"])
-            // self.per_device_batch_size
-            * n_epochs
+            len(tokenized_datasets["train"]) // self.per_device_batch_size * n_epochs
         )
 
-        val_tokenized_datasets, val_data_collator = self.get_tokenized_dataset(
-            datasets, "test"
-        )
-        num_val_samples = len(val_tokenized_datasets["test"])
+        num_val_samples = len(tokenized_datasets["val"])
         val_batch_idx = tl_utils.generate_batch_splits(
             np.arange(num_val_samples), self.per_device_batch_size
         )
@@ -171,7 +165,8 @@ class mt5PerplexityExperiments:
             num_training_steps=num_train_steps,
         )
 
-        self.log_dict = {"train": [], "val": [], "test": {}}
+        log_dict = {"train": [], "val": []}
+        print("Processing: ", train_valid_dir)
         for epoch in trange(n_epochs):
             # ======================== Training ================================
             train_losses_epoch = []
@@ -182,19 +177,12 @@ class mt5PerplexityExperiments:
                 desc="Training...",
                 total=len(train_batch_idx),
             ):
-                with open(str(new_log_path), "w") as outfile:
-                    json.dump(self.log_dict, outfile)
-
                 tl_utils.clear_memory()
 
                 self.model.train()
-                f = open(log_filename, "a+")
-                f_error = open(log_errors, "a+")
 
-                samples = [
-                    train_tokenized_datasets["train"][int(idx)] for idx in batch_idx
-                ]
-                model_inputs = train_data_collator(samples)
+                samples = [tokenized_datasets["train"][int(idx)] for idx in batch_idx]
+                model_inputs = data_collator(samples)
                 model_inputs = shard(model_inputs.data)
 
                 input_ids = torch.LongTensor(model_inputs["input_ids"]).to(self.device)
@@ -219,24 +207,18 @@ class mt5PerplexityExperiments:
 
                 # ======================== Evaluating ==============================
                 if i % step == 0 and i > 0:
-                    perp_train = np.exp(np.mean(train_losses_epoch))
-                    train_msg = f"\nTRAIN ITERATION: {i}\t FOR {train_valid_dir} \t Perplexity = {perp_train}\n"
-                    print(train_msg)
-                    f.write(train_msg)
-
-                    self.log_dict["train"].append(perp_train)
+                    train_loss = np.mean(train_losses_epoch)
 
                     self.model.eval()
                     with torch.no_grad():
                         tl_utils.clear_memory()
 
-                        val_losses_epoch = []
-                        for batch_idx in tqdm(val_batch_idx, desc="Validation..."):
+                        val_losses_batch = []
+                        for batch_idx in val_batch_idx:
                             samples = [
-                                val_tokenized_datasets["test"][int(idx)]
-                                for idx in batch_idx
+                                tokenized_datasets["val"][int(idx)] for idx in batch_idx
                             ]
-                            model_inputs = val_data_collator(samples)
+                            model_inputs = data_collator(samples)
                             model_inputs = shard(model_inputs.data)
 
                             input_ids = torch.LongTensor(model_inputs["input_ids"]).to(
@@ -258,43 +240,35 @@ class mt5PerplexityExperiments:
                                 [labels_size[0], labels_size[1] * labels_size[2]]
                             )
                             loss = self.model(input_ids=input_ids, labels=labels)
-                            val_losses_epoch.append(loss.loss.item())
+                            val_losses_batch.append(loss.loss.item())
 
-                        perp_val = np.exp(np.mean(val_losses_epoch))
-                        val_msg = f"\nVALIDATION ITERATION: {i}\t FOR {train_valid_dir} \t Perplexity = {perp_val}\n"
-                        print(val_msg)
-                        f.write(val_msg)
-                        f.close()
+                        perp_val = np.exp(np.mean(val_losses_batch))
+                        log_df["iteration"].append(i)
+                        log_df["train loss"].append(train_loss)
+                        log_df["val perplexity"].append(perp_val)
+                        log_dict["train"].append(train_loss)
 
-                        if save_checkpoints and perp_val < min(
-                            self.log_dict["val"], default=1000000
-                        ):
-                            torch.save(
-                                self.model.state_dict(),
-                                Path(self.save_folder, "best_model.pt"),
-                            )
+                        path_to_weighs = Path(
+                            self.save_folder, f"model_iter_{i}_epoch_{epoch}.pt"
+                        )
+                        torch.save(
+                            self.model.state_dict(),
+                            path_to_weighs,
+                        )
 
-                        self.log_dict["val"].append(perp_val)
+                        log_dict["val"].append(perp_val)
 
                         tl_utils.clear_memory()
 
-                        for lr_lang in tqdm(lr_languages_to_test):
-                            lang_folder_path = str(
-                                Path(Path(train_valid_dir).parent, lr_lang)
-                            )
-                            try:
-                                if lang_folder_path not in self.log_dict["test"]:
-                                    self.log_dict["test"][lang_folder_path] = []
-                                self.log_dict["test"][lang_folder_path].append(
-                                    self.testing(lang_folder_path)
-                                )
-                            except:
-                                f_error.write(
-                                    f"Something went wrong during processing: {lang_folder_path}\n"
-                                )
+                        new_log_path = Path(self.save_folder, "log_results.json")
+                        with open(str(new_log_path), "w") as outfile:
+                            json.dump(log_dict, outfile)
+
+                        clear_output(wait=True)
+                        display(pd.DataFrame(log_df))
 
     @functools.lru_cache()
-    def load_experiment_data(self, test_dir):
+    def load_test_data(self, test_dir):
         test_paths = [str(Path(test_dir, i)) for i in os.listdir(test_dir)]
         datasets = load_dataset("text", data_files=test_paths)
 
@@ -321,9 +295,7 @@ class mt5PerplexityExperiments:
                 torch.load(checkpoint_path, map_location=self.device)
             )
 
-        test_tokenized_datasets, test_data_collator = self.load_experiment_data(
-            test_dir
-        )
+        test_tokenized_datasets, test_data_collator = self.load_test_data(test_dir)
 
         num_test_samples = len(test_tokenized_datasets["train"])
         test_batch_idx = tl_utils.generate_batch_splits(
