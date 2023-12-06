@@ -1,9 +1,6 @@
-tika>=1.24
-pandas
-tqdm
-typing
-tldextract
-cchardet
-transformers
-torch
-sklearn
+transformers==4.24.0
+datasets==2.6.1
+flax==0.6.1
+fire==0.4.0
+jax==0.3.22
+jaxlib==0.3.22
