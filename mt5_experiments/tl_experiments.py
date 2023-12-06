@@ -27,11 +27,17 @@ class mt5PerplexityExperiments:
     def __init__(
         self,
         model_id: Enum = "google/mt5-base",
+        checkpoint_path: Optional[str] = None,
         device: Enum = "cuda:0",
     ):
         self.device = device
         self.model = MT5ForConditionalGeneration.from_pretrained(model_id).to(device)
         self.tokenizer = T5Tokenizer.from_pretrained(model_id)
+        
+        if checkpoint_path is not None:
+            self.model.load_state_dict(
+                torch.load(checkpoint_path, map_location=self.device)
+            )
 
     def get_tokenized_dataset(self, datasets, column_name):
         max_seq_length = min(self.max_seq_length, self.tokenizer.model_max_length)
@@ -115,8 +121,6 @@ class mt5PerplexityExperiments:
 
         if not os.path.exists(self.save_folder):
             os.makedirs(self.save_folder)
-
-        log_df = {"iteration": [], "train loss": [], "val perplexity": []}
 
         with open(Path(self.save_folder, "params.json"), "w+") as outfile:
             json.dump(log_params, outfile, indent=4)
@@ -243,18 +247,17 @@ class mt5PerplexityExperiments:
                             val_losses_batch.append(loss.loss.item())
 
                         perp_val = np.exp(np.mean(val_losses_batch))
-                        log_df["iteration"].append(i)
-                        log_df["train loss"].append(train_loss)
-                        log_df["val perplexity"].append(perp_val)
+
                         log_dict["train"].append(train_loss)
 
                         path_to_weighs = Path(
                             self.save_folder, f"model_iter_{i}_epoch_{epoch}.pt"
                         )
-                        torch.save(
-                            self.model.state_dict(),
-                            path_to_weighs,
-                        )
+                        if save_checkpoints:
+                            torch.save(
+                                self.model.state_dict(),
+                                path_to_weighs,
+                            )
 
                         log_dict["val"].append(perp_val)
 
@@ -264,7 +267,14 @@ class mt5PerplexityExperiments:
                         with open(str(new_log_path), "w") as outfile:
                             json.dump(log_dict, outfile)
 
-                        clear_output(wait=True)
+                        log_df = {
+                            "iteration": [],
+                            "train loss": [],
+                            "val perplexity": [],
+                        }
+                        log_df["iteration"].append(i)
+                        log_df["train loss"].append(train_loss)
+                        log_df["val perplexity"].append(perp_val)
                         display(pd.DataFrame(log_df))
 
     @functools.lru_cache()
@@ -282,18 +292,12 @@ class mt5PerplexityExperiments:
         mlm_probability: float = 0.15,
         mean_noise_span_length: int = 3,
         num_proc: Optional[int] = None,
-        checkpoint_path: Optional[str] = None,
     ):
         self.max_seq_length = max_seq_length
         self.per_device_batch_size = per_device_batch_size
         self.mlm_probability = mlm_probability
         self.mean_noise_span_length = mean_noise_span_length
         self.num_proc = num_proc
-
-        if checkpoint_path is not None:
-            self.model.load_state_dict(
-                torch.load(checkpoint_path, map_location=self.device)
-            )
 
         test_tokenized_datasets, test_data_collator = self.load_test_data(test_dir)
 
