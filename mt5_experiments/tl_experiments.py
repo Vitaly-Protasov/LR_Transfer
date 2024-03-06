@@ -18,7 +18,7 @@ from typing import Optional, Tuple
 import pandas as pd
 import uuid
 import functools
-from IPython.display import display, clear_output
+from IPython.display import display
 
 import tl_utils
 
@@ -128,7 +128,8 @@ class mt5PerplexityExperiments:
         train_val_paths = [
             str(Path(train_valid_dir, i)) for i in os.listdir(train_valid_dir)
         ]
-        dataset = load_dataset("text", data_files=train_val_paths, split="train")
+        loaded_dataset = load_dataset("text", data_files=train_val_paths, split="train")
+        dataset = loaded_dataset.filter(lambda example: len(example["text"].strip()) > 1 and len(example["text"].split()) > 1)
 
         data_indices = np.arange(len(dataset))
         random.shuffle(data_indices)
@@ -137,6 +138,7 @@ class mt5PerplexityExperiments:
         datasets = cutted_dataset.train_test_split(test_size=1 - train_size)
         datasets["val"] = datasets["test"]
         del datasets["test"]
+        
 
         tokenized_datasets, data_collator = self.get_tokenized_dataset(
             datasets, "train"
@@ -288,7 +290,7 @@ class mt5PerplexityExperiments:
         self,
         test_dir: os.PathLike,
         max_seq_length: int = 256,
-        per_device_batch_size: int = 64,
+        per_device_batch_size: int = 16,
         mlm_probability: float = 0.15,
         mean_noise_span_length: int = 3,
         num_proc: Optional[int] = None,
