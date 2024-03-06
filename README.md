@@ -32,5 +32,5 @@
 2. Usage of WALS features: [notebook](notebooks/wals_feat.ipynb)
 
 ### Downstream evaluation
-1. Machine translation: #TODO
+1. Machine translation: [link](downstream_eval/run_checkpoints_modest_wu.sh)
 2. POS tagging: #TODO
