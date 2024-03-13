@@ -6,6 +6,8 @@ from transformers import (
     BatchEncoding,
     PreTrainedTokenizerBase,
 )
+import torch
+import gc
 
 from transformers.models.t5.modeling_flax_t5 import shift_tokens_right
 
@@ -45,17 +47,30 @@ class FlaxDataCollatorForT5MLM:
     decoder_start_token_id: int
 
     def __call__(self, examples: List[Dict[str, np.ndarray]]) -> Dict[str, np.ndarray]:
-
         # convert list to dict and tensorize input
         max_len_array = max([len(list(i.values())[0]) for i in examples])
         batch = BatchEncoding(
-            {k: np.array([examples[i][k]+[self.pad_token_id] * (max_len_array - len(examples[i][k])) for i in range(len(examples))]) for k, v in examples[0].items()}
+            {
+                k: np.array(
+                    [
+                        examples[i][k]
+                        + [self.pad_token_id] * (max_len_array - len(examples[i][k]))
+                        for i in range(len(examples))
+                    ]
+                )
+                for k, v in examples[0].items()
+            }
         )
 
         input_ids = batch["input_ids"]
         batch_size, expandend_input_length = input_ids.shape
 
-        mask_indices = np.asarray([self.random_spans_noise_mask(expandend_input_length) for i in range(batch_size)])
+        mask_indices = np.asarray(
+            [
+                self.random_spans_noise_mask(expandend_input_length)
+                for i in range(batch_size)
+            ]
+        )
         labels_mask = ~mask_indices
 
         input_ids_sentinel = self.create_sentinel_ids(mask_indices.astype(np.int8))
@@ -78,8 +93,12 @@ class FlaxDataCollatorForT5MLM:
         start_indices = mask_indices - np.roll(mask_indices, 1, axis=-1) * mask_indices
         start_indices[:, 0] = mask_indices[:, 0]
 
-        sentinel_ids = np.where(start_indices != 0, np.cumsum(start_indices, axis=-1), start_indices)
-        sentinel_ids = np.where(sentinel_ids != 0, (self.tokenizer.vocab_size - 1 - sentinel_ids), 0)
+        sentinel_ids = np.where(
+            start_indices != 0, np.cumsum(start_indices, axis=-1), start_indices
+        )
+        sentinel_ids = np.where(
+            sentinel_ids != 0, (self.tokenizer.vocab_size - 1 - sentinel_ids), 0
+        )
         sentinel_ids -= mask_indices - start_indices
 
         return sentinel_ids
@@ -94,12 +113,15 @@ class FlaxDataCollatorForT5MLM:
         input_ids_full = np.where(sentinel_ids != 0, sentinel_ids, input_ids)
         input_ids = input_ids_full[(input_ids_full >= 0)].reshape((batch_size, -1))
         input_ids = np.concatenate(
-            [input_ids, np.full((batch_size, 1), self.tokenizer.eos_token_id, dtype=np.int32)], axis=-1
+            [
+                input_ids,
+                np.full((batch_size, 1), self.tokenizer.eos_token_id, dtype=np.int32),
+            ],
+            axis=-1,
         )
         return input_ids
 
     def random_spans_noise_mask(self, length):
-
         """This function is copy of `random_spans_helper <https://github.com/google-research/text-to-text-transfer-transformer/blob/84f8bcc14b5f2c03de51bd3587609ba8f6bbd1cd/t5/data/preprocessors.py#L2682>`__ .
 
         Noise mask consisting of random spans of noise tokens.
@@ -149,10 +171,13 @@ class FlaxDataCollatorForT5MLM:
             return segment_length
 
         noise_span_lengths = _random_segmentation(num_noise_tokens, num_noise_spans)
-        nonnoise_span_lengths = _random_segmentation(num_nonnoise_tokens, num_noise_spans)
+        nonnoise_span_lengths = _random_segmentation(
+            num_nonnoise_tokens, num_noise_spans
+        )
 
         interleaved_span_lengths = np.reshape(
-            np.stack([nonnoise_span_lengths, noise_span_lengths], axis=1), [num_noise_spans * 2]
+            np.stack([nonnoise_span_lengths, noise_span_lengths], axis=1),
+            [num_noise_spans * 2],
         )
         span_starts = np.cumsum(interleaved_span_lengths)[:-1]
         span_start_indicator = np.zeros((length,), dtype=np.int8)
@@ -175,7 +200,9 @@ def generate_batch_splits(samples_idx: jnp.ndarray, batch_size: int) -> jnp.ndar
     return batch_idx
 
 
-def compute_input_and_target_lengths(inputs_length, noise_density, mean_noise_span_length):
+def compute_input_and_target_lengths(
+    inputs_length, noise_density, mean_noise_span_length
+):
     """This function is copy of `random_spans_helper <https://github.com/google-research/text-to-text-transfer-transformer/blob/84f8bcc14b5f2c03de51bd3587609ba8f6bbd1cd/t5/data/preprocessors.py#L2466>`__ .
 
     Training parameters to avoid padding with random_spans_noise_mask.
@@ -209,10 +236,15 @@ def compute_input_and_target_lengths(inputs_length, noise_density, mean_noise_sp
 
     tokens_length = inputs_length
 
-    while _tokens_length_to_inputs_length_targets_length(tokens_length + 1)[0] <= inputs_length:
+    while (
+        _tokens_length_to_inputs_length_targets_length(tokens_length + 1)[0]
+        <= inputs_length
+    ):
         tokens_length += 1
 
-    inputs_length, targets_length = _tokens_length_to_inputs_length_targets_length(tokens_length)
+    inputs_length, targets_length = _tokens_length_to_inputs_length_targets_length(
+        tokens_length
+    )
 
     # minor hack to get the targets length to be equal to inputs length
     # which is more likely to have been set to a nice round number.
@@ -237,7 +269,15 @@ def group_texts(examples, expanded_inputs_length):
         total_length = (total_length // expanded_inputs_length) * expanded_inputs_length
     # Split by chunks of max_len.
     result = {
-        k: [t[i : i + expanded_inputs_length] for i in range(0, total_length, expanded_inputs_length)]
+        k: [
+            t[i : i + expanded_inputs_length]
+            for i in range(0, total_length, expanded_inputs_length)
+        ]
         for k, t in concatenated_examples.items()
     }
     return result
+
+
+def clear_memory():
+    torch.cuda.empty_cache()
+    gc.collect()
