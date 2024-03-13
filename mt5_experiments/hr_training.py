@@ -1,6 +1,6 @@
-from fire import Fire
 from typing import List, Union
 
+from fire import Fire
 from tl_experiments import mt5PerplexityExperiments
 from tl_utils import clear_memory
 
@@ -26,8 +26,8 @@ def main(
                 train_valid_dir=dataset_folder,
                 per_device_batch_size=per_device_batch_size,
                 n_epochs=n_epochs,
-                max_dataset_len = max_dataset_len,
-                save_checkpoints = save_checkpoints
+                max_dataset_len=max_dataset_len,
+                save_checkpoints=save_checkpoints,
             )
 
 

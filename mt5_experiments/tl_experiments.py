@@ -1,26 +1,26 @@
-from transformers import (
-    MT5ForConditionalGeneration,
-    T5Tokenizer,
-    AdamW,
-    get_linear_schedule_with_warmup,
-)
-import torch
-from tqdm.auto import tqdm, trange
-from datasets import load_dataset
+import functools
+import json
 import os
 import random
-import json
-from pathlib import Path
-import numpy as np
-from flax.training.common_utils import shard
-from enum import Enum
-from typing import Optional, Tuple
-import pandas as pd
 import uuid
-import functools
-from IPython.display import display
+from enum import Enum
+from pathlib import Path
+from typing import Optional, Tuple
 
+import numpy as np
+import pandas as pd
 import tl_utils
+import torch
+from datasets import load_dataset
+from flax.training.common_utils import shard
+from IPython.display import display
+from tqdm.auto import tqdm, trange
+from transformers import (
+    AdamW,
+    MT5ForConditionalGeneration,
+    T5Tokenizer,
+    get_linear_schedule_with_warmup,
+)
 
 
 class mt5PerplexityExperiments:
@@ -33,7 +33,7 @@ class mt5PerplexityExperiments:
         self.device = device
         self.model = MT5ForConditionalGeneration.from_pretrained(model_id).to(device)
         self.tokenizer = T5Tokenizer.from_pretrained(model_id)
-        
+
         if checkpoint_path is not None:
             self.model.load_state_dict(
                 torch.load(checkpoint_path, map_location=self.device)
@@ -129,7 +129,10 @@ class mt5PerplexityExperiments:
             str(Path(train_valid_dir, i)) for i in os.listdir(train_valid_dir)
         ]
         loaded_dataset = load_dataset("text", data_files=train_val_paths, split="train")
-        dataset = loaded_dataset.filter(lambda example: len(example["text"].strip()) > 1 and len(example["text"].split()) > 1)
+        dataset = loaded_dataset.filter(
+            lambda example: len(example["text"].strip()) > 1
+            and len(example["text"].split()) > 1
+        )
 
         data_indices = np.arange(len(dataset))
         random.shuffle(data_indices)
@@ -138,7 +141,6 @@ class mt5PerplexityExperiments:
         datasets = cutted_dataset.train_test_split(test_size=1 - train_size)
         datasets["val"] = datasets["test"]
         del datasets["test"]
-        
 
         tokenized_datasets, data_collator = self.get_tokenized_dataset(
             datasets, "train"

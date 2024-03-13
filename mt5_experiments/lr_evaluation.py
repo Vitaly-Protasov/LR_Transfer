@@ -1,13 +1,12 @@
-from pathlib import Path
-from tqdm.auto import tqdm
 import json
-from datetime import datetime
 import os
-from fire import Fire
+from datetime import datetime
+from pathlib import Path
 
+from fire import Fire
 from tl_experiments import mt5PerplexityExperiments
 from tl_utils import clear_memory
-
+from tqdm.auto import tqdm
 
 LR_LANGS = [
     "Akan",
@@ -60,10 +59,7 @@ def main(
     if hr_lang not in all_trained_hr_langs:
         raise Exception(f"'{hr_lang}' not in '{ALL_CKPTS_PATH}'")
 
-    hr_lang_ckpts_folder = Path(
-        ALL_CKPTS_PATH,
-        f"{prefix_training_folder}{hr_lang}"
-    )
+    hr_lang_ckpts_folder = Path(ALL_CKPTS_PATH, f"{prefix_training_folder}{hr_lang}")
     hr_lang_checkpoints = list(hr_lang_ckpts_folder.glob("**/*.pt"))
     if len(hr_lang_checkpoints) == 0:
         raise Exception(
