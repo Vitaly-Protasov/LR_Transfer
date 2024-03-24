@@ -41,4 +41,4 @@ pip install -r requirements.txt
 
 ### Downstream evaluation
 1. Machine translation: [link](downstream_eval/run_checkpoints_modest_wu.sh)
-2. POS tagging: #TODO
+2. POS tagging: [notebook](notebooks/POS_final.ipynb)
