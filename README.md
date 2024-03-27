@@ -16,7 +16,7 @@ pip install -r requirements.txt
 ## Pipeline of experiments
 
 ### Dataset
-1. Dataset is available here: [link]()
+1. Dataset is available here: [link](https://disk.yandex.ru/d/OeLH8C1F94stgw)
 2. See [resource_processing/](resource_processing/) for information regarding resources and scripts that were used during dataset collection:
     * [hzsk_processing](resource_processing/hzsk_processing.py)
     * [mc4_processing](resource_processing/mc4_processing.py)
